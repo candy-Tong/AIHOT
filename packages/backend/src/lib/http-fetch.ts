@@ -26,13 +26,26 @@ function egressResolver() {
   return resolveEgress ??= createEgressResolver(config.egressProxyUrl!);
 }
 
+/** True when PRIVATE_FETCH_ALLOWLIST names this exact host (any port) or host:port. */
+export function privateFetchAllowed(url: URL, list: readonly string[] = config.privateFetchAllowlist): boolean {
+  if (list.length === 0) return false;
+  const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const port = url.port || (url.protocol === "https:" ? "443" : url.protocol === "http:" ? "80" : "");
+  return list.includes(host) || list.includes(`${host}:${port}`);
+}
+
 function proxied(url: URL, route: EgressRoute): boolean {
   if (route !== "egress" || !config.egressProxyUrl) return false;
+  if (privateFetchAllowed(url)) return false;
   const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
   return net.isIP(host) === 0 && !host.endsWith(".cn") && !host.endsWith(".local");
 }
 
-function dispatcherFor(viaProxy: boolean): Dispatcher | undefined {
+let allowlistAgent: Agent | null = null;
+
+function dispatcherFor(viaProxy: boolean, allowlisted = false): Dispatcher | undefined {
+  // Allowlisted private hosts: plain direct connection (the guarded lookup would refuse the address).
+  if (allowlisted) return allowlistAgent ??= new Agent();
   if (viaProxy) {
     proxyAgent ??= createEgressProxy(config.egressProxyUrl!, egressResolver());
     return proxyAgent;
@@ -73,7 +86,7 @@ export async function guardedFetch(input: string, opts: GuardedFetchOptions = {}
   // nominal 20 s image request to occupy the API for minutes.
   const signal = AbortSignal.timeout(opts.timeoutMs ?? 20_000);
   const route = opts.route ?? "egress";
-  const check = (target: string) => withinDeadline(assertPublicUrl(target, config.allowPrivateNetworkFetch,
+  const check = (target: string) => withinDeadline(assertPublicUrl(target, config.allowPrivateNetworkFetch || privateFetchAllowed(new URL(target)),
     proxied(new URL(target), route) ? egressResolver() : undefined), signal);
   let url = await check(input);
   const maxRedirects = opts.maxRedirects ?? 5;
@@ -91,7 +104,7 @@ export async function guardedFetch(input: string, opts: GuardedFetchOptions = {}
       headers: Object.fromEntries(headers),
       body: requestBody,
       redirect: "manual",
-      dispatcher: dispatcherFor(proxied(url, route)),
+      dispatcher: dispatcherFor(proxied(url, route), privateFetchAllowed(url)),
       signal,
     });
     if ([301, 302, 303, 307, 308].includes(res.status) && res.headers.get("location")) {

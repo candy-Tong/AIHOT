@@ -42,6 +42,12 @@ export const config = {
   siteUrl: str("SITE_URL", SITE.defaultUrl).replace(/\/+$/, ""),
   egressProxyUrl: env.EGRESS_PROXY_URL || null,
   allowPrivateNetworkFetch: bool("ALLOW_PRIVATE_NETWORK_FETCH", false),
+  /**
+   * Narrow exception to the private-address guard: comma-separated `host` or `host:port` entries
+   * (exact, case-insensitive; no wildcards). Matching URLs skip the address check and are connected
+   * directly, never through the egress proxy. Example: PRIVATE_FETCH_ALLOWLIST=wewe-rss:4000
+   */
+  privateFetchAllowlist: (env.PRIVATE_FETCH_ALLOWLIST ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean),
   feishuContentPushEnabled: bool("FEISHU_CONTENT_PUSH_ENABLED", false),
   indexNowSubmitEnabled: bool("INDEXNOW_SUBMIT_ENABLED", false),
   /** IndexNow key (32 hex characters); without one nothing is submitted and no key file is served. */
