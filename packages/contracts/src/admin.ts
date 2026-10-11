@@ -163,6 +163,7 @@ export interface AdminHistoryRow {
   selected: boolean;
   visibility: string | null;
   story_id: number | null;
+  fact_id: number | null;
   /** Other times the same item was seen (another source or a re-fetch), deduplicated into this one. */
   rediscovered: number;
 }
@@ -187,6 +188,71 @@ export interface AdminHistory {
   days: AdminHistoryDay[];
   sources: Array<{ id: string; name: string }>;
   thresholds: Record<string, number>;
+}
+
+/** An article inside a story or fact on the 处理历史 page, with its outcome and latest grouping verdict. */
+export interface AdminGroupMember {
+  id: string;
+  title: string;
+  source: string;
+  tier: string;
+  discovered_at: Timestamp;
+  fact_id: number;
+  role: string;
+  evidence: string | null;
+  score: number | null;
+  outcome: AdminHistoryOutcome;
+  reason: string | null;
+  selected: boolean;
+  visibility: string | null;
+  grouping_status: string;
+  grouping_error: string | null;
+  verdict: string | null;
+  candidates: unknown;
+  decided_at: Timestamp | null;
+}
+
+export interface AdminStoryRow {
+  id: number;
+  public_id: string;
+  title: string;
+  summary: string | null;
+  origin: string;
+  first_report_at: Timestamp | null;
+  latest_at: Timestamp | null;
+  facts: number;
+  members: number;
+  sources: number;
+  selected: number;
+  top_score: number | null;
+  merged: number;
+  items: AdminGroupMember[];
+}
+
+export interface AdminFactRow {
+  id: number;
+  public_id: string;
+  title: string;
+  subject: string | null;
+  action: string | null;
+  object: string | null;
+  occurred_at: Timestamp | null;
+  created_at: Timestamp;
+  manual: boolean;
+  story_id: number | null;
+  story_title: string | null;
+  members: number;
+  sources: number;
+  selected: number;
+  top_score: number | null;
+  items: AdminGroupMember[];
+}
+
+export interface AdminGroups<T> {
+  page: number;
+  rows: T[];
+  hasMore: boolean;
+  sources: Array<{ id: string; name: string }>;
 }
 
 /** The publications row of an item, as the publish step wrote it. */
