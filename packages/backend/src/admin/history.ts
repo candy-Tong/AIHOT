@@ -142,7 +142,7 @@ function groupArgs(f: GroupFilters) {
   };
 }
 
-const groupTime = (by: "story" | "fact") => (by === "story" ? sql`x.latest_at` : sql`coalesce(x.occurred_at, x.created_at)`);
+const groupTime = (by: "story" | "fact") => (by === "story" ? sql`x.latest_at` : sql`x.created_at`);
 
 const groupOrder = (sort: string | undefined, by: "story" | "fact") =>
   sort === "score" ? sql`agg.top_score DESC NULLS LAST, ${groupTime(by)} DESC NULLS LAST, x.id DESC`

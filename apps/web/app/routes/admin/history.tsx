@@ -342,7 +342,7 @@ function FactTab({ data }: { data: AdminGroups<AdminFactRow> }) {
                   <div className="min-w-0">
                     <div className="font-medium text-ink">{r.title}</div>
                     <div className="mt-0.5 text-[11.5px] text-ink-4">
-                      Fact #{r.id} · {[r.subject, r.action, r.object].filter(Boolean).join(" / ") || "—"} · 发生 {r.occurred_at ? bj(r.occurred_at, true) : "—"} · 建立 {bj(r.created_at, true)}
+                      Fact #{r.id} · {[r.subject, r.action, r.object].filter(Boolean).join(" / ") || "—"} · 事件时间 {r.occurred_at ? bj(r.occurred_at, true) : "—"} · 建立 {bj(r.created_at, true)}
                       {r.manual && " · 人工"}
                     </div>
                     {r.story_id !== null && (
