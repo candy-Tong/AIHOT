@@ -73,14 +73,40 @@ test("report publication and its receipt commit together and recovery reuses the
   assert.equal((await sql`SELECT status FROM receipts WHERE subject = 'report:weekly:2024-W18'`)[0]!.status, "completed");
 });
 
-test("empty older gaps cannot starve a later daily, weekly or monthly, and failures remain visible", async () => {
+test("empty older gaps cannot starve a later daily, weekly or monthly, and skips remain visible", async () => {
   // An older issue carried an item; the days after it are empty. Weeklies and monthlies are compiled from dailies.
   const early = await item("2024-01-22T12:00:00Z");
   await sql`INSERT INTO reports (kind, key, window_start, window_end, content, generated_at)
     VALUES ('daily', '2024-01-23', now(), now(), ${sql.json({ sections: [{ label: "行业动态", items: [{ itemId: early, title: early }] }] })}, now())`;
   await item("2024-02-01T12:00:00Z");
-  await assert.rejects(composeDueReports(new Date("2024-02-02T03:00:00Z")), /reports:/);
+  const run = await composeDueReports(new Date("2024-02-02T03:00:00Z"), 8, new Date("2024-01-01T00:00:00Z"));
+  assert.deepEqual(run.failed, []);
+  assert.ok(run.skipped.some((s) => s.report === "daily:2024-01-24" && /no selected items/.test(s.reason)), "an empty daily is skipped, not failed");
   for (const [kind, key] of [["daily", "2024-02-02"], ["weekly", "2024-W04"], ["monthly", "2024-01"]]) {
     assert.ok(await report(kind!, key!), `${kind} ${key} was recovered past the empty gaps`);
+  }
+});
+
+test("issues whose window closed before the first collected item are skipped for good", async () => {
+  await item("2024-03-06T12:00:00Z");
+  // Data starts Wednesday 2024-03-06 20:00 Beijing; due on Monday 03-11 11:00 Beijing: daily 03-11, weekly W10, monthly 02.
+  const run = await composeDueReports(new Date("2024-03-11T03:00:00Z"), 8, new Date("2024-03-06T12:00:00Z"));
+  assert.deepEqual(run.failed, []);
+  const skipped = Object.fromEntries(run.skipped.map((s) => [s.report, s.reason]));
+  assert.match(skipped["monthly:2024-02"] ?? "", /before the first collected item/);
+  assert.doesNotMatch(skipped["weekly:2024-W10"] ?? "", /before the first/, "a week the data reaches into is attempted");
+  const none = await composeDueReports(new Date("2024-03-11T03:00:00Z"), 8, null);
+  assert.ok(none.skipped.every((s) => s.reason === "nothing collected yet") && none.failed.length === 0);
+});
+
+test("a real error still fails the run", async () => {
+  await item("2024-04-30T12:00:00Z");
+  await sql.unsafe(`CREATE FUNCTION fail_monthly() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+    IF NEW.kind = 'daily' THEN RAISE EXCEPTION 'disk full'; END IF; RETURN NEW; END $$`);
+  await sql.unsafe(`CREATE TRIGGER fail_monthly BEFORE INSERT ON reports FOR EACH ROW EXECUTE FUNCTION fail_monthly()`);
+  try {
+    await assert.rejects(composeDueReports(new Date("2024-05-01T03:00:00Z"), 40, new Date("2024-03-30T00:00:00Z")), /reports: daily:2024-05-01 failed/);
+  } finally {
+    await sql.unsafe(`DROP TRIGGER fail_monthly ON reports; DROP FUNCTION fail_monthly()`);
   }
 });

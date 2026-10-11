@@ -36,6 +36,12 @@ export function dailyMetrics(main: EditionEntry[]) {
 
 type ReportKind = "daily" | "weekly" | "monthly";
 
+/**
+ * An issue that cannot be written because there is nothing to put in it (no selected items in a daily's
+ * window, no dailies in a period). Not an error: the scheduled run records it as skipped and tries again.
+ */
+export class ReportSkipped extends Error {}
+
 /** How many events an issue already published carries; nothing when it does not exist yet. */
 async function savedReport(kind: ReportKind, key: string) {
   const [row] = await sql<{ entries: number }[]>`
@@ -84,7 +90,7 @@ export async function composeDaily(date: string, reason?: string): Promise<{ key
   const start = new Date(end.getTime() - 86400000);
   const edition = await dailyEdition(date, start, end);
   // An issue with nothing in it is a failure upstream, not a report: the run fails and is caught up later.
-  if (edition.entries.length === 0) throw new Error(`daily ${date}: no selected items in its window`);
+  if (edition.entries.length === 0) throw new ReportSkipped(`daily ${date}: no selected items in its window`);
   const issue = arrangeDaily(edition.entries);
   const [lead, ...rest] = issue.main as [EditionEntry, ...EditionEntry[]];
   const content = {
@@ -187,7 +193,7 @@ async function composePeriod(kind: "weekly" | "monthly", key: string, startDate:
   const end = new Date(beijingMidnight(endDateInclusive).getTime() + 8 * 3600 * 1000);
   const { entries, issues } = await periodEntries(startDate, endDateInclusive);
   const top = entries.slice(0, PERIOD_EVENTS[kind]);
-  if (!top.length) throw new Error(`${kind} ${key}: no daily entries in the period`);
+  if (!top.length) throw new ReportSkipped(`${kind} ${key}: no daily entries in the period`);
   const selected = await candidates(start, end);
   const groups = SECTION_ORDER
     .map((label) => ({ label, items: top.filter((e) => sectionOf(e.category) === label) }))
@@ -287,9 +293,23 @@ const nextMonth = (label: string) => {
  * filled too. A kind with no issue yet only gets its latest due one. An issue that fails does not hold
  * up the others; at most `limit` issues are written per run, the next run continues.
  */
-export async function composeDueReports(now = new Date(), limit = 8): Promise<{ generated: string[]; failed: string[] }> {
+/** When an issue's window closes (Beijing 08:00 after its last day); null for a malformed key. */
+export function reportWindowEnd(kind: ReportKind, key: string): Date | null {
+  const last = kind === "daily" ? key : kind === "weekly" ? isoWeekRange(key)?.end : monthRange(key)?.end;
+  return last ? new Date(beijingMidnight(last).getTime() + 8 * 3600 * 1000) : null;
+}
+
+/**
+ * Writes every missing issue up to the newest due one. An issue whose window closed before the first
+ * item was ever collected (`dataSince`, by default the earliest articles.discovered_at) is skipped for
+ * good; an issue with nothing to carry (ReportSkipped) is skipped this run and tried again later. Both
+ * are reported in the result, which the run keeps as its detail. Only a real error fails the run.
+ */
+export async function composeDueReports(now = new Date(), limit = 8, dataSince?: Date | null): Promise<{ generated: string[]; skipped: Array<{ report: string; reason: string }>; failed: string[] }> {
   const generated: string[] = [];
+  const skipped: Array<{ report: string; reason: string }> = [];
   const failed: string[] = [];
+  const since = dataSince !== undefined ? dataSince : (await sql<{ at: Date | null }[]>`SELECT min(discovered_at) AS at FROM articles`)[0]?.at ?? null;
   const kinds: Array<{ kind: ReportKind; due: string; next: (k: string) => string; compose: (k: string) => Promise<unknown> }> = [
     { kind: "daily", due: dueDaily(now), next: (k) => addDays(k, 1), compose: composeDaily },
     { kind: "weekly", due: dueWeekly(now), next: nextWeek, compose: composeWeekly },
@@ -300,16 +320,25 @@ export async function composeDueReports(now = new Date(), limit = 8): Promise<{ 
     const first = [...have].sort()[0] ?? k.due;
     for (let key = first; key <= k.due; key = k.next(key)) {
       if (have.has(key)) continue;
+      const end = reportWindowEnd(k.kind, key);
+      if (!since || (end && end <= since)) {
+        skipped.push({ report: `${k.kind}:${key}`, reason: since ? "window closed before the first collected item" : "nothing collected yet" });
+        continue;
+      }
       if (shutdownSignal.signal.aborted || generated.length >= limit) break kinds;
       try {
         await k.compose(key);
         generated.push(`${k.kind}:${key}`);
       } catch (error) {
+        if (error instanceof ReportSkipped) {
+          skipped.push({ report: `${k.kind}:${key}`, reason: error.message });
+          continue;
+        }
         failed.push(`${k.kind}:${key}`);
         console.error(JSON.stringify({ level: "error", msg: "report failed", report: `${k.kind}:${key}`, error: String(error).slice(0, 300) }));
       }
     }
   }
   if (failed.length) throw new Error(`reports: ${failed.join(", ")} failed${generated.length ? `; ${generated.join(", ")} written` : ""}`);
-  return { generated, failed };
+  return { generated, skipped, failed };
 }
