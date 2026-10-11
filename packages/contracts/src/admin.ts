@@ -139,6 +139,56 @@ export interface AdminContentSearch {
   rows: AdminContentRow[];
 }
 
+/** Where an item ended up in the pipeline, as the 处理历史 page names it. */
+export type AdminHistoryOutcome = "pending" | "failed" | "filtered" | "skipped" | "unscored" | "not_selected" | "selected";
+
+export interface AdminHistoryRow {
+  id: string;
+  title: string;
+  url: string;
+  source_id: string;
+  source: string;
+  tier: string;
+  discovered_at: Timestamp;
+  processing_state: string;
+  body_status: string;
+  grouping_status: string;
+  outcome: AdminHistoryOutcome;
+  /** The why of the outcome: the error, the prefilter or score reasoning, or the publication reason. */
+  reason: string | null;
+  relevance: string | null;
+  score: number | null;
+  /** The tier's selection cutoff (mean score); null when the tier is not scored for 精选. */
+  threshold: number | null;
+  selected: boolean;
+  visibility: string | null;
+  story_id: number | null;
+  /** Other times the same item was seen (another source or a re-fetch), deduplicated into this one. */
+  rediscovered: number;
+}
+
+export interface AdminHistoryDay {
+  day: string;
+  found: number;
+  new_items: number;
+  total: number;
+  pending: number;
+  failed: number;
+  filtered: number;
+  scored: number;
+  selected: number;
+  top_score: number | null;
+}
+
+export interface AdminHistory {
+  page: number;
+  rows: AdminHistoryRow[];
+  hasMore: boolean;
+  days: AdminHistoryDay[];
+  sources: Array<{ id: string; name: string }>;
+  thresholds: Record<string, number>;
+}
+
 /** The publications row of an item, as the publish step wrote it. */
 export interface AdminPublication {
   article_id: string;
